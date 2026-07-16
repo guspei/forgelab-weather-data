@@ -1,0 +1,55 @@
+name: Campo diario de temperaturas (ICON-EU)
+
+on:
+  schedule:
+    # El run 00z de ICON-EU termina de publicarse ~04:30 UTC
+    - cron: '40 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ¿Visitas recientes? (solo en ejecuciones programadas)
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          BODY=$(curl -sf --max-time 20 https://forgelab.studio/api/map-visit || echo FAIL)
+          if [ "$BODY" = "FAIL" ]; then
+            # Si el sitio no responde, mejor procesar (fail-open)
+            echo "run=yes" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          LAST=$(echo "$BODY" | jq -r '.lastVisit // empty')
+          NOW=$(date -u +%s)
+          if [ -n "$LAST" ] && [ $((NOW - LAST)) -lt 172800 ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "Sin visitas en 48 h: no se procesa hoy."
+            echo "run=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Instalar eccodes
+        if: steps.gate.outputs.run == 'yes'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libeccodes-tools bzip2
+
+      - name: Procesar ICON-EU
+        if: steps.gate.outputs.run == 'yes'
+        run: node pipeline-icon.mjs out
+
+      - name: Publicar en la rama data (un solo commit, sin historial)
+        if: steps.gate.outputs.run == 'yes'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch --orphan data
+          cp out/temperaturas-eu-hd.bin out/temperaturas-eu-hd.bin.gz out/meta.json .
+          git add temperaturas-eu-hd.bin temperaturas-eu-hd.bin.gz meta.json
+          git commit -m "Campo $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -f origin data
