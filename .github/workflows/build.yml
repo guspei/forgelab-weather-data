@@ -2,8 +2,12 @@ name: Campo diario de temperaturas (ICON-EU)
 
 on:
   schedule:
-    # El run 00z de ICON-EU termina de publicarse ~04:30 UTC
+    # El run 00z de ICON-EU termina de publicarse ~04:30 UTC. GitHub a veces
+    # retrasa o se salta crons, así que hay pasadas de respaldo: si el campo
+    # del día ya está publicado, la pasada se detecta y no procesa nada.
     - cron: '40 4 * * *'
+    - cron: '40 6 * * *'
+    - cron: '40 9 * * *'
   workflow_dispatch:
 
 permissions:
@@ -15,11 +19,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: ¿Visitas recientes? (solo en ejecuciones programadas)
+      - name: ¿Hace falta procesar? (solo en ejecuciones programadas)
         id: gate
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "run=yes" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # ¿Ya está publicado el run 00z de hoy? Entonces esta pasada sobra.
+          PUBLISHED=$(curl -sf --max-time 20 https://raw.githubusercontent.com/guspei/forgelab-weather-data/data/meta.json | jq -r '.run // empty' || true)
+          if [ "$PUBLISHED" = "$(date -u +%Y%m%d)00" ]; then
+            echo "El campo de hoy ($PUBLISHED) ya está publicado: nada que hacer."
+            echo "run=no" >> "$GITHUB_OUTPUT"; exit 0
           fi
           BODY=$(curl -sf --max-time 20 https://forgelab.studio/api/map-visit || echo FAIL)
           if [ "$BODY" = "FAIL" ]; then
