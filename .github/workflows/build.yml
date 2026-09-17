@@ -31,14 +31,17 @@ jobs:
             echo "El campo de hoy ($PUBLISHED) ya está publicado: nada que hacer."
             echo "run=no" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          BODY=$(curl -sf --max-time 20 https://forgelab.studio/api/map-visit || echo FAIL)
-          if [ "$BODY" = "FAIL" ]; then
-            # Si el sitio no responde, mejor procesar (fail-open)
+          # -L: si el dominio vuelve a cambiar, seguir la redirección en vez de
+          # recibir la página HTML del 301.
+          BODY=$(curl -sfL --max-time 20 https://eduardopeire.com/api/map-visit) || BODY=FAIL
+          LAST=$(echo "$BODY" | jq -r '.lastVisit // 0' 2>/dev/null) || LAST=FAIL
+          if [ "$LAST" = "FAIL" ]; then
+            # Si el sitio no responde o no devuelve JSON, mejor procesar (fail-open)
+            echo "Sin respuesta válida de map-visit: se procesa igualmente."
             echo "run=yes" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          LAST=$(echo "$BODY" | jq -r '.lastVisit // empty')
           NOW=$(date -u +%s)
-          if [ -n "$LAST" ] && [ $((NOW - LAST)) -lt 172800 ]; then
+          if [ $((NOW - LAST)) -lt 172800 ]; then
             echo "run=yes" >> "$GITHUB_OUTPUT"
           else
             echo "Sin visitas en 48 h: no se procesa hoy."
